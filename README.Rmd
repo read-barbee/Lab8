@@ -73,7 +73,8 @@ summary(fr.rc)
 
 fixef(fr.rc) # This is the fixed effects coefficients
 ranef(fr.rc) # These are the random effects, which in this model is just (1|elkuid), so, one coefficient for each individual elk
-elk2$fr.rc.pred <- predict(fr.rc, type = "response")
+coef(fr.rc)
+elk2$fr.rc.pred <- predict(fr.rc, type = "response") 
 hist(elk2$fr.rc.pred)
 ```
 Note that this is the histogram of predictions to both the 0's and 1's in the dataset, not just the 0's as Avgar et al. (2017) advocate to be able to intepret the probabiltiy of use, not just seleciton, given the distribution of available covariates in a study area (see lab presentaiton, and forthcoming R code example).
@@ -81,13 +82,19 @@ Note that this is the histogram of predictions to both the 0's and 1's in the da
 Next, we do the basic predictions which are the fixed-effects unconditional on the random effects (i.e., Naive logit)
 ```{r}
 elk2$fr.rc.pred2 <- predict(fr.rc, re.form = NA, type = "response")
-summary(elk2$fr.rc.pred2)
+summary(elk2$fr.rc.pred2) #this is both 0s and 1s, which is difficult to interpret. These are JUST the FIXED effects predictions (Marginal Effects). type= "response" means probability distribution, (that's what re.form = NA means (this is the default))
 ```
 But note now we can make predictions for JUST individual elk ignoring the variation between individuals in predation risk responses
 ```{r}
-elk2$fr.rc.pred3 <- predict(fr.rc, re.form = ~(1|elkuid) , type = "response")
+elk2$fr.rc.pred3 <- predict(fr.rc, re.form = ~(1|elkuid) , type = "response") #incorporates random effects variance
 summary(elk2$fr.rc.pred3)
 hist(elk2$fr.rc.pred3)
+
+#re.form = (ctotrisk|elkuid) full random effects of individuals and predation risks. random intercepts and slopes?
+
+#each time you add a level variance estimates increase. Makes predictions more difficult
+
+#compare spatial predictions from naive model and full random effects model--shows you difference between individual and population
 ```
 
 This is the plot of the predictions from the unconditional predictions (X) versus the fully-specified random effects of risk|elkid (y). But this isnt as complicated as it can get, as we saw in LAb 7.  I review these different types of predictions here because we will continue to explore the complexity in making predictions from mixed-effects models this week but with the added twist of fitting inhomogenous spatial point process models. 
@@ -105,7 +112,7 @@ Thus, the first thing we need to do is add a column for weights. This is from Fi
 elk2 <-
   elk2 %>% 
   as_tibble() %>% 
-  mutate(w=if_else(used==0, 5000,1),
+  mutate(w=if_else(used==0, 5000,1), # equivalent to number of available points sampled. Should be on the same order as the number of points you're picking?
          elkuid = as.factor(elkuid),
          used = as.factor(used),
          log_risk = log(ctotrisk),
@@ -138,6 +145,8 @@ system.time(
 )
 
 summary(forage_risk_r_int)
+#shows fixed random intercept for zeroes at very high value (essentially infinite)
+#negative intercept for quadratic means they select for it up to a point and then selection decreases
 ```
 
 If you're curious about how different a model is without fixing the random intercept variance at a high value, you can run that model and compare the coefficients to the model above.
@@ -160,10 +169,10 @@ This next model has a random intercept and a random slope for `log_risk_sc` at t
 ```{r random_slope_risk_model}
 system.time(
   forage_risk_slope_risk <- glmmTMB(used ~ totalherb_sc + totalherb2_sc + log_risk_sc + 
-                                    (1|elkuid) + (0 + log_risk_sc|elkuid), 
-                                  data=elk2, family=binomial, weights = w, 
-                                  map=list(theta=factor(c(NA, 1))),
-                                  start=list(theta=c(log(1e3), 0)))
+                                      (1|elkuid) + (0 + log_risk_sc|elkuid), 
+                                    data=elk2, family=binomial, weights = w, 
+                                    map=list(theta=factor(c(NA, 1))),
+                                    start=list(theta=c(log(1e3), 0)))
 )
 
 summary(forage_risk_slope_risk)
@@ -172,7 +181,7 @@ plot_model(forage_risk_slope_risk, transform=NULL)
 
 Now `log_risk_sc` is no longer significant because there's a lot of the individual heterogeneity in responses to predation risk.
 
-Finally here's a model where both risk and forage (including a quadratic term for forage) have random slopes. It took 1.5 minutes to run. You can see that for both the `map` and `start` arguments, you can just change the last number (in this case, 3) to the number of random slopes you are fitting. Note that we could also specify the forage random slopes like this: `(0 + totalherb_sc + totalherb2_sc | herd)`. The only difference is that we would be telling the model that the random slopes for those two terms are correlated with each other. So, you'd add another model "parameter", which would be a correlation term between the first-order and second-order terms. And you'd have to change the 3s to 4s in the `map` and `start` arguments. I tried specifying the model both ways, and the results were essentially identical.
+Finally here's a model where both risk and forage (including a quadratic term for forage) have random slopes. It took 1.5 minutes to run. You can see that for both the `map` and `start` arguments, you can just change the last number (in this case, 3) to the number of random slopes you are fitting. Note that we could also specify the forage random slopes like this: `(0 + totalherb_sc + totalherb2_sc | elkuid)`. The only difference is that we would be telling the model that the random slopes for those two terms are correlated with each other. So, you'd add another model "parameter", which would be a correlation term between the first-order and second-order terms. And you'd have to change the 3s to 4s in the `map` and `start` arguments. I tried specifying the model both ways, and the results were essentially identical.
 ```{r random_slope_both_model}
 system.time(forage_risk_slopes_both <- glmmTMB(used ~ totalherb_sc + totalherb2_sc + log_risk_sc + 
                                      (1|elkuid) + (0 + totalherb_sc|elkuid) + (0 + totalherb2_sc|elkuid) + 
@@ -184,6 +193,9 @@ system.time(forage_risk_slopes_both <- glmmTMB(used ~ totalherb_sc + totalherb2_
             
 summary(forage_risk_slopes_both)
 sjPlot::plot_model(forage_risk_slopes_both, transform=NULL)
+
+#these confidence intervals are just from fixed effects variances. need to use Mermod for that
+#https://cran.r-project.org/web/packages/merTools/vignettes/Using_predictInterval.html
 ```
 
 Both forage terms are still highly significant. 
@@ -218,6 +230,8 @@ as_tibble(rownames_to_column(coef(forage_risk_slopes_both)$cond$elkuid, "elkuid"
   geom_vline(xintercept = fixef(forage_risk_slopes_both)$cond["totalherb_sc"], 
              color = "orange", linetype="dashed", size = 1) +
   theme_classic()
+
+#fits the inhomogenous poisson point process correctly using true logistic regression
 ```
 
 If you want to get the the conditional standard deviations (std.error) for the random coefficients to construct confidence intervals, use `broom.mixed::tidy`. Again, these are not technically the same as conditional standard errors you get in a Bayesian Model. The `ran_vals` argument also just gives you offsets from the fixed effects, so you have to add them to the fixed effect to get the individual-level coefficient. 
@@ -287,7 +301,7 @@ system.time(forage_risk_slopes_both_UNFIXED <- glmmTMB(used ~ totalherb_sc + tot
 Let's say you want to predict the relative probability of selection across the entire range of forage biomass values that elk enounter. To get fixed effects (population-level) predictions, just create a new data frame from which to predict, but fill all your grouping variables (in our case, `elkuid`) with `NA`. Create a sequence of unscaled forage biomass values from the minimum to maximum values (pooled across all animals), then scale those values. Since you are trying to isolate the effect of forage biomass on selection, set scaled prediction risk to 0, and provide any value (including NA) for `w`. Note that you do *not* need to go back and fit a separate model with unscaled covariates. You've include both scaled and unscaled versions of forage values in the new data. We'll use the scaled values for the predictions and the unscaled values for plotting the response.
 ```{r create_df_for_fixed_preds}
 forage_for_predict_population <-
-  tibble(elkuid = NA,
+  tibble(elkuid = NA, #not making predictions for individual elk
          totalherb = seq(min(elk2$totalherb), max(elk2$totalherb), len=100),
          totalherb2 = totalherb^2,
          totalherb_sc = as.numeric(scale(totalherb)),
@@ -308,6 +322,7 @@ pop_pred_unfixed <-
 
 Now you can plot the predictions, and find the total biomass value where relative selection is highest.
 ```{r plot_fixed_preds}
+#fixed effects of the quadratic in this population
 pop_pred_unfixed %>% 
   ggplot(., aes(x=totalherb, y=pred_real)) +
   geom_line(size=1) +
@@ -379,7 +394,7 @@ There is an option to add standard errors in the `predict` function, but I could
 pred_CI <- function(model, newdata=NULL, alpha=0.05) {
   pred0 <- predict(model, re.form=NA, newdata=newdata) - fixef(model)$cond["(Intercept)"]
   X <- model.matrix(formula(model, fixed.only=TRUE)[-2], newdata)[,-1]
-  V <- vcov(model)$cond[-1,-1]     
+  V <- vcov(model)$cond[-1,-1]   # getting rid of the random intercept  
   pred_se <- sqrt(diag(X %*% V %*% t(X))) 
   crit <- -qnorm(alpha/2)
   pred_df <- as_tibble(exp(cbind(pred=pred0, conf.low=pred0-crit*pred_se,
@@ -446,6 +461,7 @@ Okay, that looks messy, but it underscores how the magnitudes of the predictions
 
 Let's zoom in so we can actually see more of the responses.
 ```{r}
+#individual-level quadradic predictions
 for_predict_ind %>%
   mutate(pred = exp(totalherb_sc*forage_coef + totalherb2_sc*forage2_coef)) %>% 
   ggplot(., aes(x=totalherb, y=pred, color=elkuid)) +
@@ -466,6 +482,8 @@ for_predict_ind %>%
     geom_line(data = fixed_response, size = 2, color="black") + 
     theme_classic(base_size=15) +
     coord_cartesian(xlim= c(0,200), ylim=c(0,10))
+
+#manual prediction ignores random intercept variance--essential!
 ```
 
 Okay, it does seem to make sense. Not the best example, but it does show a LOT of individual variation!
@@ -480,6 +498,8 @@ for_predict_ind %>%
     geom_line(data = fixed_response, size = 2, color="black") + 
     theme_classic(base_size=15) +
     coord_cartesian(xlim= c(0,200), ylim=c(0,10))
+
+#leaving in infinite variance around 0s makes plot a lot more variable
 ```
 
 It's hard to see which is correct here, but basically, because the `predict` function still (somehow) accounts for the random intercept variance, we should steer clear of using it when we screw with the random intercept variance. 
@@ -514,6 +534,8 @@ elk2 %>%
   ggplot(., aes(x = totalherb, y = predict)) +
   geom_smooth(alpha=0.2, size=1.6) +
   theme_classic(base_size=20)
+
+#predicted probability of USE (0s only)
 ```
 
 
